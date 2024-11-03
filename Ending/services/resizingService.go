@@ -65,9 +65,7 @@ func (s *ResizingService) SubmitForAsyncProcessing(request models.ResizeRequest)
 	return results
 }
 
-// Legacy blocking implementation
-// But is sped by by parralel processing of images
-// Can be sped up by resizing several images in parallel with waitgroups
+// Blocking implementation - improved speed by parallel processing with wait groups
 func (s *ResizingService) ProcessResizes(request models.ResizeRequest) ([]models.ResizeResult, error) {
 	results := make([]models.ResizeResult, 0, len(request.URLs))
 	var wg sync.WaitGroup
