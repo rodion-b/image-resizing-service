@@ -52,52 +52,61 @@ func (s *ResizingService) SubmitForAsyncProcessing(request models.ResizeRequest)
 		//we skip the processing if image with such key is already in cash
 		if !s.Cache.Contains(key) {
 			go s.startResizingProcess(url, request.Width, request.Height, key)
+			result.URL = newURL
+			result.Result = inProgress
+			result.Cached = false
+		} else {
+			result.URL = newURL
+			result.Result = success
+			result.Cached = true
 		}
-
-		result.URL = newURL
-		result.Result = inProgress
-		result.Cached = false
 		results = append(results, result)
 	}
 	return results
 }
 
 // Legacy blocking implementation
+// But is sped by by parralel processing of images
 // Can be sped up by resizing several images in parallel with waitgroups
 func (s *ResizingService) ProcessResizes(request models.ResizeRequest) ([]models.ResizeResult, error) {
 	results := make([]models.ResizeResult, 0, len(request.URLs))
+	var wg sync.WaitGroup
 
 	for _, url := range request.URLs {
-		result := models.ResizeResult{}
-		id := s.genID(url)
-		key := "/v1/image/" + id + ".jpeg"
-		newURL := config.Proto + config.Hostport + key
+		wg.Add(1)
+		go func(url string) {
+			defer wg.Done()
+			result := models.ResizeResult{}
+			id := s.genID(url)
+			key := "/v1/image/" + id + ".jpeg"
+			newURL := config.Proto + config.Hostport + key
 
-		//we skipp the processing if image is already in there
-		if s.Cache.Contains(key) {
+			//we skipp the processing if image is already in there
+			if s.Cache.Contains(key) {
+				result.URL = newURL
+				result.Result = success
+				result.Cached = true
+				results = append(results, result)
+				return
+			}
+
+			resizedImage, err := s.startResizingProcess(url, request.Width, request.Height, key)
+			if err != nil {
+				log.Printf("failed to resize %s: %v", url, err)
+				result.Result = failure
+				results = append(results, result)
+				return
+			}
+
+			s.Cache.Add(key, resizedImage)
+
 			result.URL = newURL
 			result.Result = success
 			result.Cached = true
 			results = append(results, result)
-			continue
-		}
-
-		resizedImage, err := s.startResizingProcess(url, request.Width, request.Height, key)
-		if err != nil {
-			log.Printf("failed to resize %s: %v", url, err)
-			result.Result = failure
-			results = append(results, result)
-			continue
-		}
-
-		s.Cache.Add(key, resizedImage)
-
-		result.URL = newURL
-		result.Result = success
-		result.Cached = true
-		results = append(results, result)
+		}(url)
 	}
-
+	wg.Wait()
 	return results, nil
 }
 
